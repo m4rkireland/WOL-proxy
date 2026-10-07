@@ -1,0 +1,28 @@
+{
+  "extends": [
+    "config:recommended",
+    "helpers:pinGitHubActionDigests"
+  ],
+  "enabledManagers": [
+    "dockerfile",
+    "pip_requirements",
+    "github-actions"
+  ],
+  "schedule": [
+    "* 0-3 * * *"
+  ],
+  "minimumReleaseAge": "2 days",
+  "packageRules": [
+    {
+      "matchUpdateTypes": [
+        "major",
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "automerge": true,
+      "ignoreTests": false
+    }
+  ]
+}
