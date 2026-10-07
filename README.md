@@ -1,84 +1,61 @@
-# WOL-proxy
+# Maintained WOL-proxy
 
-WOL-proxy is a dockerized Wake-On-LAN tool that received commands to send Wake-On-LAN magic packets over MQTT. This allows a computer to be woken on a network where a WOL packet would not normally reach (remote site, etc.)  
+Fork of [seanauff/WOL-proxy](https://github.com/seanauff/WOL-proxy), MIT. MQTT command -> local-network Wake-on-LAN; no HTTP listener or privileged/raw socket is needed.
 
-The script can be run using docker (takes care of all dependencies) or standalone. It is design to run on Raspberry Pi or equivalent.
+## Image and network
 
-## Usage
+`ghcr.io/m4rkireland/wol-proxy:latest` (amd64/arm64). Production should select an immutable revision/digest. Builds pass unit tests, a real local Mosquitto integration test with a mocked packet sender, and a fixed HIGH/CRITICAL vulnerability gate before publication.
 
-1. Have a MQTT broker you can connect to. I use [Mosquitto](https://hub.docker.com/_/eclipse-mosquitto).
+**The container must be connected to the destination VLAN** (macvlan/ipvlan or an appropriate host interface). Ordinary Docker bridge or host networking on a management-only host does not solve cross-VLAN broadcast delivery. This service never reconfigures host networking.
 
-2. Run the container or script using instructions below.
+Run as UID/GID 10001, drop all capabilities, use a read-only root filesystem and a writable `/tmp` tmpfs. Credentials may be supplied through a Docker secret file. No ports are exposed. Health checks inspect broker subscription/network readiness and never send a wake packet.
 
-3. Publish to the mqtt topic, `WOL-proxy/command`, with the MAC address of the computer you wish to wake. The following formats are acceptable: `ab-cd-ef-01-23-45`, `ab:cd:ef:01:23:45`, `ab.cd.ef.01.23.45`, `abcdef012345`. An [example Home Assistant config](/hass-config-example.yaml) is provided.
+## MQTT contract
 
-   By default, WOL-proxy accepts messages on the `WOL-proxy/command` mqtt topic. The `WOL-proxy` prefix can be changed by setting the `MQTT_TOPIC_PREFIX` environment variable. WOL-proxy will then listen for messages on `[MQTT_TOPIC_PREFIX]/command`. Note that adding a trailing `/` to `MQTT_TOPIC_PREFIX` will create an empty level.
+- `<MQTT_TOPIC_PREFIX>/command`: an ASCII MAC address, published **without retain**.
+- `<prefix>/status`: retained `Online` when broker subscription and optional source-network guard are ready; last will/graceful shutdown uses `Offline`. Readiness updates use QoS 0 (no broker acknowledgement) to avoid Paho's QoS 1 reconnect replay queue. Failed publishes are retried on the next tick, and readiness is recomputed after every reconnect. The last will and graceful-shutdown `Offline` remain QoS 1; command QoS is unchanged.
+- `<prefix>/result`: non-retained JSON such as `{"status":"sent"}`. This proves send dispatch, **not** that a sleeping computer woke.
 
-   |Value of MQTT_TOPIC_PREFIX|mqtt command topic|
-   |--------------------------|-----------------|
-   |`WOL-proxy`                |`WOL-proxy/command`|
-   |`switches/remoteLAN`          |`switches/remoteLAN/command`|
-   |`switches/remoteLAN/`         |`switches/remoteLAN//command`|
+MQTT v5 is used. Retained commands are suppressed both at initial subscription and during a live subscription. Invalid/oversized payloads and wrong topics are rejected. An optional MAC allowlist limits targets. A three-second cooldown serializes duplicate/concurrent requests. There are no commands on startup, reconnect or health checks.
 
-### Status Messages
+## Configuration
 
-WOL-proxy will report its status on the `[MQTT_TOPIC_PREFIX]/status` topic via retained messages. WOL-Proxy reports `Online` once it connects to the broker. Upon disconnect, the broker will report `Offline`.
+Existing variable names remain supported:
 
-## Running via Docker
+- `MQTT_BROKER_HOST=127.0.0.1`, `MQTT_BROKER_PORT=1883` (8883 when TLS enabled)
+- `MQTT_CLIENT_ID=WOL-proxy`, `MQTT_TOPIC_PREFIX=WOL-proxy`, `MQTT_QOS=1`
+- `MQTT_USERNAME`, `MQTT_PASSWORD` or preferred `MQTT_PASSWORD_FILE`
+- `WOL_BROADCAST_ADDR=255.255.255.255`, `WOL_PORT=9`
 
-Pull the image. The `latest` tag has multiarch support, so it should pull the correct image for your system.
+Additional safeguards:
 
-```shell
-docker pull ghcr.io/seanauff/wol-proxy
+- `MQTT_TLS=true`: verify the server certificate and hostname using system CA trust; `MQTT_TLS_CA_FILE` supports a private CA. There is no insecure TLS option.
+- `WOL_ALLOWED_MACS`: comma-separated target MAC allowlist. Empty preserves generic upstream behavior; production should set it.
+- `WOL_SOURCE_INTERFACE`: interface from which to read the IPv4 source, or `WOL_SOURCE_IP` for an explicit address.
+- `WOL_SOURCE_SUBNET`: require the selected source address and configured broadcast to belong to the expected IPv4 network. Requires a source interface/IP.
+
+To connect to a private broker address while validating its public certificate name, use a container-scoped hostname mapping; do not disable verification.
+
+## Home Assistant
+
+Keep the existing script/dashboard control, replacing only its action:
+
+```yaml
+sequence:
+  - action: mqtt.publish
+    data:
+      topic: wol/example/command
+      payload: "02:00:00:00:00:01"
+      qos: 1
+      retain: false
 ```
 
-Start the container with all default environment variables:
+Configure the relay prefix, allowlist and destination VLAN accordingly. For non-Work deployments, substitute your actual target and topic.
 
-```shell
-docker run -d --net=host --name=WOL-proxy ghcr.io/seanauff/wol-proxy
-```
+## Tests and maintenance
 
-Start the container with modified environment variables:
+`python -m pip install -r requirements.txt && python -m unittest -v`
 
-```shell
-docker run -d --net=host --name=WOL-proxy -e MQTT_BROKER_HOST=<host> -e WOL_BROADCAST_ADDR=<broadcast> ghcr.io/seanauff/wol-proxy
-```
+The broker integration test requires a local `mosquitto` executable. It listens only on localhost and replaces the actual packet sender with a mock. CI installs Mosquitto and executes this test. `python mqtt_runner.py --healthcheck` performs read-only health inspection.
 
-*Note:* Container needs to run with host networking in order to send the broadcast packets correctly!
-
-### Environment Variables
-
-| Variable          | Default Value | Notes |
-|-------------------|---------------|-------|
-| MQTT_BROKER_HOST  |  127.0.0.1    |IP or hostname of MQTT broker       |
-| MQTT_BROKER_PORT  |  1883         |Port of MQTT broker       |
-| MQTT_CLIENT_ID    |  WOL-proxy  |Change this if the default is already in use by another client       |
-| MQTT_USERNAME     |               |Username for connecting to MQTT broker when using auth. TLS not currently supported       |
-| MQTT_PASSWORD     |               |Password for connecting to MQTT broker when using auth. TLS not currently supported       |
-| MQTT_TOPIC_PREFIX | WOL-proxy   |The first level(s) of the topic for the proxy to subscribe ([prefix]/command) and provide status ([prefix]/status)      |
-| MQTT_QOS          | 1             |[QOS](https://www.hivemq.com/blog/mqtt-essentials-part-6-mqtt-quality-of-service-levels/) level to use to subscribe to command topic       |
-| WOL_BROADCAST_ADDR| 255.255.255.255         |Change to the local broadcast IP for best results    |
-
-### Build the image yourself
-
-Clone the repository and build the image:
-
-```shell
-git clone https://github.com/seanauff/WOL-proxy.git
-docker build -t seanauff/wol-proxy WOL-proxy
-```
-
-## Other Install Methods
-
-### Dependencies
-
-This project uses the following libraries:
-
-* [paho-mqtt](https://pypi.org/project/paho-mqtt/)
-* [wakeonlan](https://pypi.org/project/wakeonlan/)
-
-Install them with:
-
-```shell
-pip install paho-mqtt wakeonlan
-```
+The Python base/dependencies/Actions are pinned. Renovate is configured for daily checks with a two-day release age and green-only dependency automerge; installation/runner access is separate from this repository configuration. Unfixed CVEs are reported by Trivy but do not bypass fixed HIGH/CRITICAL gates.
