@@ -35,6 +35,26 @@ jobs:
           context: .
           load: true
           tags: wol-proxy:candidate
+      - name: Smoke test hardened runtime without networking
+        run: >-
+          docker run --rm --network none --read-only --cap-drop ALL --tmpfs /tmp
+          --entrypoint python wol-proxy:candidate -c
+          "import os, importlib.util;
+          from wol_proxy import Config, Relay;
+          from mqtt_runner import Runtime, healthcheck;
+          assert os.geteuid() == 10001;
+          assert importlib.util.find_spec('pip') is None;
+          assert importlib.util.find_spec('ensurepip') is None;
+          sent = [];
+          cfg = Config(allowed_macs=('02:00:00:00:00:01',));
+          relay = Relay(cfg, sender=lambda *a, **kw: sent.append((a, kw)));
+          assert relay.handle('WOL-proxy/command', b'02:00:00:00:00:01') == 'sent';
+          assert len(sent) == 1;
+          runtime = Runtime(cfg, relay=relay);
+          assert runtime.tick() is False;
+          assert healthcheck() is False;
+          assert len(sent) == 1;
+          print('Non-root/read-only runtime imports, mock dispatch and no-wake health checks passed')"
       - name: Gate fixed HIGH/CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
