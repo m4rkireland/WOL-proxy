@@ -4,7 +4,7 @@ Fork of [seanauff/WOL-proxy](https://github.com/seanauff/WOL-proxy), MIT. MQTT c
 
 ## Image and network
 
-`ghcr.io/m4rkireland/wol-proxy:latest` (amd64/arm64). Production should select an immutable revision/digest. Builds pass unit tests, a real local Mosquitto integration test with a mocked packet sender, and a fixed HIGH/CRITICAL vulnerability gate before publication.
+`ghcr.io/m4rkireland/wol-proxy:latest` (amd64/arm64). Production should select an immutable revision/digest. Builds pass unit tests, a real local Mosquitto integration test with a mocked packet sender, and a HIGH/CRITICAL vulnerability gate including unfixed findings before publication.
 
 **The container must be connected to the destination VLAN** (macvlan/ipvlan or an appropriate host interface). Ordinary Docker bridge or host networking on a management-only host does not solve cross-VLAN broadcast delivery. This service never reconfigures host networking.
 
@@ -58,4 +58,4 @@ Configure the relay prefix, allowlist and destination VLAN accordingly. For non-
 
 The broker integration test requires a local `mosquitto` executable. It listens only on localhost and replaces the actual packet sender with a mock. CI installs Mosquitto and executes this test. `python mqtt_runner.py --healthcheck` performs read-only health inspection.
 
-The Python base/dependencies/Actions are pinned. Renovate is configured for daily checks with a two-day release age and green-only dependency automerge; installation/runner access is separate from this repository configuration. Unfixed CVEs are reported by Trivy but do not bypass fixed HIGH/CRITICAL gates.
+The Python base/dependencies/Actions are pinned. Renovate is configured for daily checks with a two-day release age and green-only dependency automerge; installation/runner access is separate from this repository configuration. The Alpine runtime omits unused package installers; Trivy gates all HIGH/CRITICAL findings, including unfixed ones, matching the deployment repository policy.
