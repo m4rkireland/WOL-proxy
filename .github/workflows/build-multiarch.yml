@@ -55,13 +55,13 @@ jobs:
           assert healthcheck() is False;
           assert len(sent) == 1;
           print('Non-root/read-only runtime imports, mock dispatch and no-wake health checks passed')"
-      - name: Gate fixed HIGH/CRITICAL vulnerabilities
+      - name: Gate all HIGH/CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: wol-proxy:candidate
           format: table
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
+          ignore-unfixed: false
           exit-code: '1'
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         if: github.event_name != 'pull_request'
